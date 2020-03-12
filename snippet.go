@@ -13,29 +13,30 @@ var replacer = strings.NewReplacer(
 	`"`, `\"`,
 	`[`, `\[`,
 	`]`, `\]`,
+    `'`, `\"`,
 )
 
-func snippetFlagCompletion(flag *pflag.Flag, action *Action) (snippet string) {
-	var suffix, multimark, multimarkEscaped string
+func snippetFlagCompletion(cmd *cobra.Command, flag *pflag.Flag, action *Action) (snippet string) {
+	var suffix string
 	if action == nil {
 		if flag.NoOptDefVal != "" {
 			suffix = "" // no argument required for flag
 		} else {
-			suffix = ": :" // require a value
+			suffix = " -r" // require a value
 		}
 	} else {
-		suffix = fmt.Sprintf(": :%v", action.Value)
+		suffix = fmt.Sprintf(" -a '(%v)' -r", action.Value)
 	}
 
-	if zshCompFlagCouldBeSpecifiedMoreThenOnce(flag) {
-		multimark = "*"
-		multimarkEscaped = "\\*"
-	}
+	//if zshCompFlagCouldBeSpecifiedMoreThenOnce(flag) {
+	//	multimark = "*"
+	//	multimarkEscaped = "\\*"
+	//}
 
 	if flag.Shorthand == "" { // no shorthannd
-		snippet = fmt.Sprintf(`"%v--%v[%v]%v"`, multimark, flag.Name, replacer.Replace(flag.Usage), suffix)
+		snippet = fmt.Sprintf(`complete -c %v -f -n '_state %v' -l %v -d '%v'%v`, cmd.Root().Name(), uidCommand(cmd), flag.Name, replacer.Replace(flag.Usage), suffix)
 	} else {
-		snippet = fmt.Sprintf(`"(%v-%v %v--%v)"{%v-%v,%v--%v}"[%v]%v"`, multimark, flag.Shorthand, multimark, flag.Name, multimarkEscaped, flag.Shorthand, multimarkEscaped, flag.Name, replacer.Replace(flag.Usage), suffix)
+		snippet = fmt.Sprintf(`complete -c %v -f -n '_state %v' -l %v -s %v -d '%v'%v`, cmd.Root().Name(), uidCommand(cmd), flag.Name, flag.Shorthand, replacer.Replace(flag.Usage), suffix)
 	}
 	return
 }

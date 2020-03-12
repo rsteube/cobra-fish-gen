@@ -28,7 +28,7 @@ func init() {
 	actionCmd.Flags().String("multi_parts", "", "multi_parts flag")
 
 	zsh.Gen(actionCmd).FlagCompletion(zsh.ActionMap{
-		"files":            zsh.ActionFiles("*.go"),
+		"files":            zsh.ActionFiles(".go"),
 		"groups":           zsh.ActionGroups(),
 		"hosts":            zsh.ActionHosts(),
 		"message":          zsh.ActionMessage("message example"),

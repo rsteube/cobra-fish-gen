@@ -18,7 +18,7 @@ type CompletionCallback func(args []string) Action
 // finalize replaces value if a callback function is set
 func (a Action) finalize(uid string) Action {
 	if a.Callback != nil {
-		a.Value = ActionExecute(fmt.Sprintf(`${os_args[1]} _zsh_completion '%v' ${${os_args:1:gs/\"/\\\"}:gs/\'/\\\"}`, uid)).Value
+		a.Value = ActionExecute(fmt.Sprintf(`_callback %v`, uid)).Value
 	}
 	return a
 }
@@ -30,7 +30,7 @@ func ActionCallback(callback CompletionCallback) Action {
 
 // ActionExecute uses command substitution to invoke a command and evalues it's result as Action
 func ActionExecute(command string) Action {
-	return Action{Value: fmt.Sprintf(` eval \$(%v)`, command)} // {EVAL-STRING} action did not handle space escaping ('\ ') as expected (separate arguments), this one works
+	return Action{Value: fmt.Sprintf(`%v`, command)} // {EVAL-STRING} action did not handle space escaping ('\ ') as expected (separate arguments), this one works
 }
 
 // ActionBool completes true/false
@@ -40,47 +40,39 @@ func ActionBool() Action {
 
 // ActionPathFiles completes filepaths
 // [http://zsh.sourceforge.net/Doc/Release/Completion-System.html#index-_005fpath_005ffiles]
-func ActionPathFiles(pattern string) Action { // TODO support additional options
-	if pattern == "" {
-		return Action{Value: "_path_files"}
-	} else {
-		return Action{Value: fmt.Sprintf("_path_files -g '%v'", pattern)}
-	}
+func ActionPathFiles(suffix string) Action { // TODO support additional options
+	return ActionExecute(fmt.Sprintf(`__fish_complete_suffix "%v"`, suffix)) // TODO
 }
 
 // ActionFiles _path_files with all options except -g and -/. These options depend on file-patterns style setting. // TODO fix doc
 // [http://zsh.sourceforge.net/Doc/Release/Completion-System.html#index-_005ffiles]
-func ActionFiles(pattern string) Action {
-	if pattern == "" {
-		return Action{Value: "_files"}
-	} else {
-		return Action{Value: fmt.Sprintf("_files -g '%v'", pattern)}
-	}
+func ActionFiles(suffix string) Action {
+	return ActionExecute(fmt.Sprintf(`__fish_complete_suffix "%v"`, suffix)) // TODO
 }
 
 // ActionNetInterfaces completes network interface names
 func ActionNetInterfaces() Action {
-	return Action{Value: "_net_interfaces"}
+	return ActionExecute("__fish_print_interfaces")
 }
 
 // ActionUsers completes user names
 func ActionUsers() Action {
-	return Action{Value: "_users"}
+	return ActionExecute("__fish_complete_users")
 }
 
 // ActionGroups completes group names
 func ActionGroups() Action {
-	return Action{Value: "_groups"}
+    return ActionExecute("__fish_complete_groups")
 }
 
 // ActionHosts completes host names
 func ActionHosts() Action {
-	return Action{Value: "_hosts"}
+	return ActionExecute("__fish_print_hostnames")
 }
 
 // ActionOptions completes the names of shell options
 func ActionOptions() Action {
-	return Action{Value: "_options"}
+	return Action{Value: ""} // TOOD
 }
 
 // ActionValues completes arbitrary keywords (values)
@@ -92,9 +84,10 @@ func ActionValues(values ...string) Action {
 	vals := make([]string, len(values))
 	for index, val := range values {
 		// TODO escape special characters
-		vals[index] = strings.Replace(val, " ", `\ `, -1)
+		//vals[index] = strings.Replace(val, " ", `\ `, -1)
+		vals[index] = val
 	}
-	return Action{Value: fmt.Sprintf(`_values '' %v`, strings.Join(vals, " "))}
+	return ActionExecute(fmt.Sprintf(`echo -e %v`, strings.Join(vals, `\n`)))
 }
 
 // ActionValuesDescribed completes arbitrary key (values) with an additional description (value, description pairs)
@@ -103,7 +96,7 @@ func ActionValuesDescribed(values ...string) Action {
 	vals := make([]string, len(values))
 	for index, val := range values {
 		if index%2 == 0 {
-			vals[index/2] = fmt.Sprintf("'%v[%v]'", val, values[index+1])
+			vals[index/2] = fmt.Sprintf(`%v\t%v`, val, values[index+1])
 		}
 	}
 	return ActionValues(vals...)
@@ -111,10 +104,10 @@ func ActionValuesDescribed(values ...string) Action {
 
 // ActionMessage displays a help messages in places where no completions can be generated
 func ActionMessage(msg string) Action {
-	return Action{Value: fmt.Sprintf(" _message -r '%v'", msg)} // space before _message is necessary
+  return ActionValuesDescribed("ERR", msg, "_", "")
 }
 
 // ActionMultiParts completes multiple parts of words separately where each part is separated by some char
 func ActionMultiParts(separator rune, values ...string) Action {
-	return Action{Value: fmt.Sprintf("_multi_parts %v '(%v)'", string(separator), strings.Join(values, " "))}
+	return ActionValues(values...)
 }

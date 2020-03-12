@@ -19,33 +19,38 @@ func (c Completions) invokeCallback(uid string, args []string) Action {
 			return action.Callback(args)
 		}
 	}
-	return ActionMessage(fmt.Sprintf("callback %v unknown", uid))
+	return Action{Value: ""} // no message on fish since callback is determinaed by commandline
+	//return ActionMessage(fmt.Sprintf("callback %v unknown", uid))
 }
 
 func (c Completions) Generate(cmd *cobra.Command) string {
-	result := fmt.Sprintf("#compdef %v\n", cmd.Name())
+	result := fmt.Sprintf(`function _state
+  set -lx CURRENT (commandline -cp)
+  if [ "$LINE" != "$CURRENT" ]
+    set -gx LINE (commandline -cp)
+    set -gx STATE (commandline -cp | xargs %v _fish_completion state)
+  end
+
+  [ "$STATE" = "$argv" ]
+end
+
+function _callback
+  set -lx CALLBACK (commandline -cp | sed "s/ \$/ _/" | xargs %v _fish_completion $argv )
+  eval "$CALLBACK"
+end
+
+complete -c %v -f
+`, cmd.Name(), cmd.Name(), cmd.Name())
 	result += c.GenerateFunctions(cmd)
 
-	result += fmt.Sprintf("if compquote '' 2>/dev/null; then _%v; else compdef _%v %v; fi\n", cmd.Name(), cmd.Name(), cmd.Name()) // check if withing completion function and enable direct sourcing
 	return result
 }
 
 func (c Completions) GenerateFunctions(cmd *cobra.Command) string {
-	function_pattern := `function %v {
-  %v%v  _arguments -C \
-%v%v
-}
+  // TODO ensure state is only called oncy per LINE
+	function_pattern := `
+%v
 `
-
-	commandsVar := ""
-	if cmd.HasSubCommands() {
-		commandsVar = "local -a commands\n"
-	}
-
-	inheritedArgs := ""
-	if !cmd.HasParent() {
-		inheritedArgs = "  # shellcheck disable=SC2206\n  local -a -x os_args=(${words})\n\n"
-	}
 
 	flags := make([]string, 0)
 	for _, flag := range zshCompExtractFlag(cmd) {
@@ -55,9 +60,9 @@ func (c Completions) GenerateFunctions(cmd *cobra.Command) string {
 
 		var s string
 		if action, ok := c.actions[uidFlag(cmd, flag)]; ok {
-			s = "    " + snippetFlagCompletion(flag, &action)
+			s = snippetFlagCompletion(cmd, flag, &action)
 		} else {
-			s = "    " + snippetFlagCompletion(flag, nil)
+			s = snippetFlagCompletion(cmd, flag, nil)
 		}
 
 		flags = append(flags, s)
@@ -65,35 +70,30 @@ func (c Completions) GenerateFunctions(cmd *cobra.Command) string {
 
 	positionals := make([]string, 0)
 	if cmd.HasSubCommands() {
-		positionals = []string{`    "1: :->cmnds"`, `    "*::arg:->args"`}
-	} else {
-		pos := 1
-		for {
-			if action, ok := c.actions[uidPositional(cmd, pos)]; ok {
-				positionals = append(positionals, "    "+snippetPositionalCompletion(pos, action))
-				pos++
-			} else {
-				break // TODO only consisten entriess for now
-			}
+		positionals = []string{}
+		for _, subcmd := range cmd.Commands() {
+          positionals = append(positionals, fmt.Sprintf(`complete -c %v -f -n '_state %v ' -a %v -d '%v'`, cmd.Root().Name(), uidCommand(cmd), subcmd.Name(), subcmd.Short))
+			// TODO repeat for aliases
+			// TODO filter hidden
 		}
+	} else {
 		if len(positionals) == 0 {
 			if cmd.ValidArgs != nil {
-				positionals = []string{"    " + snippetPositionalCompletion(1, ActionValues(cmd.ValidArgs...))}
+				//positionals = []string{"    " + snippetPositionalCompletion(1, ActionValues(cmd.ValidArgs...))}
 			}
-			positionals = append(positionals, `    "*::arg:->args"`)
+			positionals = append(positionals, fmt.Sprintf(`complete -c %v -f -n '_state %v' -a '(_callback _)'`, cmd.Root().Name(), uidCommand(cmd)))
 		}
 	}
 
 	arguments := append(flags, positionals...)
 
 	result := make([]string, 0)
-	result = append(result, fmt.Sprintf(function_pattern, uidCommand(cmd), commandsVar, inheritedArgs, strings.Join(arguments, " \\\n"), snippetSubcommands(cmd)))
+	result = append(result, fmt.Sprintf(function_pattern,  strings.Join(arguments, "\n")))
 	for _, subcmd := range cmd.Commands() {
 		if !subcmd.Hidden {
 			result = append(result, c.GenerateFunctions(subcmd))
 		}
 	}
-
 	return strings.Join(result, "\n")
 }
 
@@ -166,7 +166,44 @@ func addCompletionCommand(cmd *cobra.Command) {
 				if len(os.Args) > 3 {
 					origArg = os.Args[4:]
 				}
-				targetArgs := traverse(cmd, origArg)
+				_, targetArgs := traverse(cmd, origArg)
+				fmt.Println(completions.invokeCallback(callback, targetArgs).Value)
+			}
+		},
+		FParseErrWhitelist: cobra.FParseErrWhitelist{
+			UnknownFlags: true,
+		},
+		DisableFlagParsing: true,
+	})
+
+	cmd.Root().AddCommand(&cobra.Command{
+		Use:    "_fish_completion",
+		Hidden: true,
+		Run: func(cmd *cobra.Command, args []string) {
+			if len(args) <= 0 {
+				fmt.Println(completions.Generate(cmd.Root()))
+			} else {
+				callback := args[0]
+				origArg := []string{}
+				if len(os.Args) > 4 {
+					origArg = os.Args[4:]
+				}
+				targetCmd, targetArgs := traverse(cmd, origArg)
+				if callback == "_" {
+					if len(targetArgs) == 0 {
+						callback = uidPositional(targetCmd, 1)
+					} else {
+						lastArg := targetArgs[len(targetArgs)-1]
+						if strings.HasSuffix(lastArg, " ") {
+							callback = uidPositional(targetCmd, len(targetArgs)+1)
+						} else {
+							callback = uidPositional(targetCmd, len(targetArgs))
+						}
+					}
+				} else if callback == "state" {
+					 fmt.Println(uidCommand(targetCmd))
+                     os.Exit(0) // TODO
+				}
 				fmt.Println(completions.invokeCallback(callback, targetArgs).Value)
 			}
 		},
@@ -177,9 +214,9 @@ func addCompletionCommand(cmd *cobra.Command) {
 	})
 }
 
-func traverse(cmd *cobra.Command, args []string) []string {
+func traverse(cmd *cobra.Command, args []string) (*cobra.Command, []string) {
 	// ignore flag parse errors (like a missing argument for the flag currently being completed)
 	targetCmd, targetArgs, _ := cmd.Root().Traverse(args)
 	targetCmd.ParseFlags(targetArgs)
-	return targetCmd.Flags().Args() // TODO check length
+	return targetCmd, targetCmd.Flags().Args() // TODO check length
 }
